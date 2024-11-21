@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Mic Amplifier</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 20px;
+        }
+        h1 {
+            color: #4CAF50;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+        label {
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        select, input[type="range"] {
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Mic Amplifier</h1>
+    <p>Choose a microphone and control the amplification level with the slider!</p>
+    <div id="controls">
+        <label for="microphoneSelect">Microphone:</label>
+        <select id="microphoneSelect"></select>
+        <label for="speakerSelect">Speaker:</label>
+<select id="speakerSelect"></select>
+<br><br>
+
+        <br><br>
+        <label for="amplificationSlider">Amplification Level:</label>
+        <input id="amplificationSlider" type="range" min="1" max="5" step="0.1" value="2">
+    </div>
+    <br>
+    <button id="startButton">Start Amplifier</button>
+    <button id="stopButton" disabled>Stop Amplifier</button>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const microphoneSelect = document.getElementById('microphoneSelect');
+        const amplificationSlider = document.getElementById('amplificationSlider');
+        let audioContext, microphone, gainNode, currentStream;
+
+        // Populate the microphone options
+        async function populateMicrophoneOptions() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
+                
+                // Clear previous options
+                microphoneSelect.innerHTML = '';
+                
+                audioInputDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Microphone ${index + 1}`;
+                    microphoneSelect.appendChild(option);
+                });
+            } catch (error) {
+                alert('Error fetching microphone options: ' + error.message);
+            }
+        }
+        const speakerSelect = document.getElementById('speakerSelect');
+let outputAudio; // To handle the audio output element
+
+// Function to populate available speakers
+async function populateSpeakers() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioOutputDevices = devices.filter(device => device.kind === 'audiooutput');
+        
+        // Populate speakers dropdown
+        speakerSelect.innerHTML = ''; // Clear existing options
+        audioOutputDevices.forEach((device, index) => {
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `Speaker ${index + 1}`;
+            speakerSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error fetching speakers:', error);
+    }
+}
+
+// Function to set the chosen speaker for audio output
+async function setSpeaker() {
+    if (!outputAudio) return;
+    const selectedSpeakerId = speakerSelect.value;
+    if (outputAudio.setSinkId) {
+        try {
+            await outputAudio.setSinkId(selectedSpeakerId);
+        } catch (error) {
+            console.error('Error setting speaker:', error);
+        }
+    } else {
+        alert('Your browser does not support selecting audio output devices.');
+    }
+}
+
+// Initialize speaker selection
+populateSpeakers();
+navigator.mediaDevices.addEventListener('devicechange', populateSpeakers);
+
+// Example: When starting audio playback
+startButton.addEventListener('click', async () => {
+    outputAudio = new Audio();
+    const destination = audioContext.createMediaStreamDestination();
+    gainNode.connect(destination);
+    outputAudio.srcObject = destination.stream;
+    await setSpeaker(); // Set the selected speaker
+    outputAudio.play();
+});
+
+// Update speaker when a new option is chosen
+speakerSelect.addEventListener('change', setSpeaker);
+
+        // Start the amplifier
+        startButton.addEventListener('click', async () => {
+            try {
+                // Stop any previous stream
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+
+                // Get the selected microphone
+                const selectedDeviceId = microphoneSelect.value;
+                const constraints = { audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined } };
+                
+                // Request audio stream
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Create audio nodes
+                microphone = audioContext.createMediaStreamSource(currentStream);
+                gainNode = audioContext.createGain();
+                
+                // Set initial amplification level
+                gainNode.gain.value = amplificationSlider.value;
+
+                // Connect nodes
+                microphone.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                // Enable/Disable buttons
+                startButton.disabled = true;
+                stopButton.disabled = false;
+
+                // Update amplification in real-time
+                amplificationSlider.addEventListener('input', () => {
+                    if (gainNode) {
+                        gainNode.gain.value = amplificationSlider.value;
+                    }
+                });
+            } catch (error) {
+                alert('Error accessing the microphone: ' + error.message);
+            }
+        });
+
+        // Stop the amplifier
+        stopButton.addEventListener('click', () => {
+            if (audioContext) {
+                audioContext.close();
+            }
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            startButton.disabled = false;
+            stopButton.disabled = true;
+        });
+
+        // Fetch microphones on load
+        populateMicrophoneOptions();
+        navigator.mediaDevices.addEventListener('devicechange', populateMicrophoneOptions);
+    </script>
+</body>
+</html>
