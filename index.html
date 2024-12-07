@@ -13,41 +13,26 @@
         h1 {
             color: #4CAF50;
         }
-        button {
-            padding: 10px 20px;
+        label, select, button {
             font-size: 16px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+            margin: 10px 0;
         }
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
-        #controls {
-            margin-top: 20px;
-        }
-        label {
-            font-size: 16px;
-            margin-right: 10px;
-        }
-        select, input[type="range"] {
-            font-size: 16px;
+        select {
+            width: 200px;
         }
     </style>
 </head>
 <body>
     <h1>Live Mic Amplifier</h1>
-    <p>Choose a microphone and control the amplification level with the slider!</p>
-    <div id="controls">
-        <label for="microphoneSelect">Microphone:</label>
-        <select id="microphoneSelect"></select>
-        <br><br>
+    <p>Select a microphone, speaker, and amplify your voice!</p>
+    <label for="microphoneSelect">Choose Microphone:</label>
+    <select id="microphoneSelect"></select>
+    <br>
+    <label for="speakerSelect">Choose Speaker (Output):</label>
+    <select id="speakerSelect"></select>
+    <br><br>
         <label for="amplificationSlider">Amplification Level:</label>
         <input id="amplificationSlider" type="range" min="1" max="5" step="0.1" value="2">
-    </div>
     <br>
     <button id="startButton">Start Amplifier</button>
     <button id="stopButton" disabled>Stop Amplifier</button>
@@ -57,17 +42,31 @@
         const stopButton = document.getElementById('stopButton');
         const microphoneSelect = document.getElementById('microphoneSelect');
         const amplificationSlider = document.getElementById('amplificationSlider');
-        let audioContext, microphone, gainNode, currentStream;
+        const speakerSelect = document.getElementById('speakerSelect');
+        let audioContext, microphone, gainNode, outputAudio, currentStream;
 
-        // Populate the microphone options
+        // Request microphone permissions and populate device options
+        async function initializeDevices() {
+            try {
+                // Request permissions to access the microphone
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                // Populate microphones and speakers
+                await populateMicrophoneOptions();
+                await populateSpeakerOptions();
+            } catch (error) {
+                console.error('Error initializing devices:', error);
+                alert('Please allow microphone access and refresh the page.');
+            }
+        }
+
+        // Populate microphone options
         async function populateMicrophoneOptions() {
             try {
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const audioInputDevices = devices.filter(device => device.kind === 'audioinput');
-                
-                // Clear previous options
+
                 microphoneSelect.innerHTML = '';
-                
                 audioInputDevices.forEach((device, index) => {
                     const option = document.createElement('option');
                     option.value = device.deviceId;
@@ -75,53 +74,71 @@
                     microphoneSelect.appendChild(option);
                 });
             } catch (error) {
-                alert('Error fetching microphone options: ' + error.message);
+                console.error('Error fetching microphones:', error);
             }
         }
 
-        // Start the amplifier
+        // Populate speaker (audio output) options
+        async function populateSpeakerOptions() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioOutputDevices = devices.filter(device => device.kind === 'audiooutput');
+
+                speakerSelect.innerHTML = '';
+                audioOutputDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Speaker ${index + 1}`;
+                    speakerSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error fetching speakers:', error);
+            }
+        }
+
+        // Start the live microphone amplifier
         startButton.addEventListener('click', async () => {
             try {
-                // Stop any previous stream
-                if (currentStream) {
-                    currentStream.getTracks().forEach(track => track.stop());
-                }
+                if (audioContext) audioContext.close(); // Reset audio context
+                audioContext = new AudioContext();
 
                 // Get the selected microphone
-                const selectedDeviceId = microphoneSelect.value;
-                const constraints = { audio: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined } };
-                
-                // Request audio stream
-                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                
+                const microphoneId = microphoneSelect.value;
+                currentStream = await navigator.mediaDevices.getUserMedia({
+                    audio: { deviceId: { exact: microphoneId } },
+                });
+
                 // Create audio nodes
                 microphone = audioContext.createMediaStreamSource(currentStream);
                 gainNode = audioContext.createGain();
+                const destination = audioContext.createMediaStreamDestination();
+                microphone.connect(gainNode).connect(destination);
+
+                // Output audio element
+                outputAudio = new Audio();
+                outputAudio.srcObject = destination.stream;
                 
-                // Set initial amplification level
-                gainNode.gain.value = amplificationSlider.value;
 
-                // Connect nodes
-                microphone.connect(gainNode);
-                gainNode.connect(audioContext.destination);
+                // Set selected speaker (audio output)
+                const speakerId = speakerSelect.value;
+                if (outputAudio.setSinkId) {
+                    await outputAudio.setSinkId(speakerId);
+                } else {
+                    alert("Your browser doesn't support speaker selection.");
+                }
 
-                // Enable/Disable buttons
+                // Play the amplified audio
+                outputAudio.play();
+                
+
                 startButton.disabled = true;
                 stopButton.disabled = false;
-
-                // Update amplification in real-time
-                amplificationSlider.addEventListener('input', () => {
-                    if (gainNode) {
-                        gainNode.gain.value = amplificationSlider.value;
-                    }
-                });
             } catch (error) {
-                alert('Error accessing the microphone: ' + error.message);
+                console.error('Error starting amplifier:', error);
             }
         });
 
-        // Stop the amplifier
+        // Stop the live microphone amplifier
         stopButton.addEventListener('click', () => {
             if (audioContext) {
                 audioContext.close();
@@ -133,9 +150,11 @@
             stopButton.disabled = true;
         });
 
-        // Fetch microphones on load
-        populateMicrophoneOptions();
-        navigator.mediaDevices.addEventListener('devicechange', populateMicrophoneOptions);
+        // Initialize device lists on page load
+        initializeDevices();
+
+        // Update devices dynamically if devices change
+        navigator.mediaDevices.addEventListener('devicechange', initializeDevices);
     </script>
 </body>
 </html>
